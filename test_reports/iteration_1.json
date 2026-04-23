@@ -1,0 +1,45 @@
+{
+  "summary": "First round of backend+frontend testing for ChurchFlow MVP. 16/16 backend pytest tests pass (after fixing one MongoDB ObjectId leak in /api/auth/register). Frontend e2e for login, dashboard, churches CRUD, members, services creation, liturgy editor, reports and CSV export all working.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/auth/register", "issue": "FIXED by testing agent: endpoint returned 500 due to MongoDB ObjectId leaking into JSON response (insert_one mutates dict with _id, dict-comp only excluded password_hash). Added _id to exclusion list."},
+      {"endpoint": "POST /api/services/{id}/assignments (email side effect)", "issue": "Resend free-tier only allows sending to the verified account email (iasdstacinterno@gmail.com). Assignments created for seed members with other emails (@exemplo.com) log a warning in backend logs. Non-blocking (task is fire-and-forget), but worth documenting or disabling real send in dev."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Landing/Login (anonymous)", "issues": ["/api/auth/me fires on mount and returns 401, producing two console errors before the user has logged in. Consider suppressing the call when there's no stored token/cookie or swallow the 401 silently in AuthContext."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_churchflow.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Optional: silence the initial /api/auth/me 401 in AuthContext when no token/cookie is present to avoid noisy console errors on Landing/Login.",
+    "Optional: guard outbound Resend email send behind a feature flag or verified-recipient check so the backend log does not fill with 'You can only send testing emails...' warnings.",
+    "Consider adding email template for assignment notification in a dedicated sender domain once Resend domain is verified."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 757 lines (over the 700-line guideline). Recommend splitting into routers/ (auth, churches, members, services, elections, reports) and a shared db/utils module.",
+    "Auth cookie is set with secure=True, samesite='none' which is correct for cross-site, but /api/auth/logout only deletes the session linked to cookie value, not Bearer token. Clients using Bearer cannot revoke server-side. Fine for MVP.",
+    "PATCH /api/assignments/{id} takes status via query param (?status=...) rather than JSON body. Works, but inconsistent with the rest of the API and vulnerable to logging of query strings.",
+    "Suggestions endpoint only returns suggestions; it does not persist assignments. Frontend ServiceEditor must also POST to /assignments for each suggestion. Verified Sugerir button is present; full round-trip not validated end-to-end by automation but backend test_service_full_flow exercised the suggest endpoint.",
+    "Resend call is wrapped in asyncio.create_task without tracking; task exceptions are logged only via logger.warning. Acceptable for MVP.",
+    "seed_admin() prints the plain admin password to logs ('senha=Admin@2026') — remove in production."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (line 253: excluded '_id' from register response)",
+    "/app/backend/tests/test_churchflow.py (new pytest suite, 16 tests)"
+  ],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% of flows exercised (login, dashboard stats, igrejas CRUD, membros, cultos create, editor load, escalas, eleicoes, relatorios, participant app) loaded without UI errors"},
+  "test_credentials": "Admin: iasdstacinterno@gmail.com / Admin@2026 (verified working, role=ADMIN_GLOBAL)",
+  "seed_data_creation": "Seed runs at startup: admin user, 'IASD Central' church with 6 members (varied cargos) and 1 template 'Culto Divino Padrao' (6 steps). UI tests created TEST_UI_Igreja and TEST_UI_Culto; these should be cleaned up manually or via a cleanup script before retesting reports counts.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend tests live at /app/backend/tests/test_churchflow.py and can be rerun with `pytest backend/tests/test_churchflow.py -v`. All use REACT_APP_BACKEND_URL. The register endpoint had an ObjectId leak bug that is now fixed. Frontend uses data-testid extensively (login-email, login-password, login-submit, stat-*, new-church-btn, church-name-input/city-input/save, services-church-select, new-service-btn, service-name-input/date-input/template-select/save, service-card-<id>, edit-<id>, live-<id>, etc). Dashboard sidebar is inside AppLayout; pages /cultos/:id/live and /app are outside the layout. Google Auth is via /api/auth/session and was NOT exercised (external Emergent OAuth).",
+  "rca of the issue": "Register 500 RCA: motor's insert_one injects '_id' (ObjectId) into the passed-in dict. The original code did `{k: v for k, v in doc.items() if k not in ('password_hash',)}` which retained '_id'. FastAPI jsonable_encoder raised TypeError on ObjectId. Fix: add '_id' to the exclusion tuple. Reproduction: POST /api/auth/register with any new email returned 500 before fix; 200 with user object after."
+}
