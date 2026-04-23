@@ -686,7 +686,7 @@ async def seed_admin():
         "auth_provider": "password", "picture": None,
         "created_at": now_utc().isoformat(),
     })
-    logger.info(f"Admin seed criado: {ADMIN_EMAIL} / senha={ADMIN_PASSWORD}")
+    logger.info(f"Admin seed criado: {ADMIN_EMAIL}")
     # Seed demo church + members + template
     if await db.churches.count_documents({}) == 0:
         cid = f"ch_{uuid.uuid4().hex[:12]}"
