@@ -1,0 +1,92 @@
+{
+  "theme": "Light",
+  "archetype": "1 (Organic & Earthy)",
+  "design_philosophy": "A welcoming, trustworthy, and organized platform for church management. Uses warm, earthy tones to evoke community and peace, replacing cold SaaS clinical vibes with organic warmth.",
+  "colors": {
+    "background": "#F9F8F6",
+    "surface": "#FFFFFF",
+    "primary": "#E07A5F",
+    "primary_hover": "#D0674D",
+    "secondary": "#81B29A",
+    "secondary_hover": "#70A088",
+    "accent": "#F2CC8F",
+    "text_primary": "#2D3A31",
+    "text_secondary": "#5C6B61",
+    "border": "#E5E3DC",
+    "success": "#81B29A",
+    "warning": "#F2CC8F",
+    "danger": "#D95D39",
+    "glass_bg": "rgba(255, 255, 255, 0.8)"
+  },
+  "typography": {
+    "heading_font": "Outfit, sans-serif",
+    "body_font": "Figtree, sans-serif",
+    "scales": {
+      "h1": "text-4xl sm:text-5xl lg:text-6xl tracking-tight leading-none text-text-primary",
+      "h2": "text-2xl sm:text-3xl lg:text-4xl tracking-tight text-text-primary",
+      "h3": "text-xl sm:text-2xl text-text-primary",
+      "h4": "text-lg sm:text-xl font-medium text-text-primary",
+      "body": "text-base leading-relaxed text-text-secondary",
+      "small": "text-sm text-text-secondary",
+      "overline": "text-xs uppercase tracking-[0.2em] font-bold text-secondary"
+    }
+  },
+  "layout_spacing": {
+    "philosophy": "Generous Spacing Philosophy. Use 2-3x more spacing than typical designs to give content breathing room.",
+    "marketing_grid_tetris": "grid-cols-1 md:grid-cols-8 lg:grid-cols-12 gap-8 lg:gap-12",
+    "dashboard_grid_control_room": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 md:gap-6",
+    "container_padding": "p-6 sm:p-8 md:p-12 lg:p-16",
+    "card_padding": "p-6 sm:p-8",
+    "surfaces": "Flat Solid backgrounds with subtle 1px borders (border-border). Avoid soft UI everywhere."
+  },
+  "components": {
+    "buttons": "Rounded-md (max 8px). Pure primary color for main CTA. Explicitly set hover states (hover:bg-primary_hover hover:text-white). No default shadows.",
+    "cards": "Flat surface (#FFFFFF), 1px subtle border (#E5E3DC), sharp or subtly rounded (max 8px). Hover state: slight lift (-translate-y-1) and subtle shadow (shadow-lg).",
+    "navigation": "Marketing: Sticky header with Crystal Glassmorphism (backdrop-blur-xl bg-white/80 border-b border-border/40). Dashboard: Solid off-white sidebar. Mobile Participant: Bottom fixed navigation for easy thumb reach.",
+    "drag_and_drop_liturgy": "Use distinct grab handles (lucide icons). High contrast drop zones with dashed borders in secondary color. Dragging item should get a shadow-xl and scale up slightly.",
+    "live_service_timeline": "Full-screen distraction-free view. Enormous text. Current active stage highlighted with secondary color (Sage) background and bold text. Negative space is critical here.",
+    "charts": "Recharts. Avoid default colors. Map series to brand palette: #E07A5F, #81B29A, #F2CC8F.",
+    "forms": "Shadcn Input/Select components. Use flat borders, focus states must use primary color ring (focus:ring-2 focus:ring-[#E07A5F]).",
+    "tables": "Clean, spacious rows (py-4). Left-aligned content. Avatar+Name flex combos for member columns."
+  },
+  "animations": {
+    "hover_states": "transition-all duration-200 ease-in-out",
+    "page_transitions": "framer-motion subtle fade-in and slide-up (y: 20 -> y: 0)",
+    "micro_interactions": "Scale down on click (active:scale-[0.98])."
+  },
+  "icons_assets": {
+    "icon_library": "lucide-react",
+    "images": [
+      {
+        "category": "hero_landing",
+        "url": "https://images.unsplash.com/photo-1766524554883-2be2d4880fe3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1MDZ8MHwxfHNlYXJjaHwyfHxtb2Rlcm4lMjBjaHVyY2glMjBjb21tdW5pdHl8ZW58MHx8fHwxNzc2OTc0Mzg2fDA&ixlib=rb-4.1.0&q=85",
+        "description": "Modern church building with a cross. Use with bg-black/40 overlay if text is on top, or position side-by-side."
+      },
+      {
+        "category": "community_prayer",
+        "url": "https://images.pexels.com/photos/14530762/pexels-photo-14530762.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "A diverse group of people holding hands in prayer. Ideal for 'About Us' or feature sections."
+      },
+      {
+        "category": "worship_gathering",
+        "url": "https://images.pexels.com/photos/29422234/pexels-photo-29422234.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "description": "Large congregation attending a conference. Good for event management placeholder."
+      }
+    ]
+  },
+  "accessibility_and_testing": {
+    "contrast": "Ensure 4.5:1 ratio for text. Text over images must have overlays.",
+    "data_testid": "MANDATORY: All interactive elements must include data-testid attributes in kebab-case (e.g., data-testid='login-submit-button', data-testid='liturgy-add-stage')."
+  },
+  "instructions_to_main_agent": [
+    "You are building a hybrid fullstack app: A Marketing Landing Page, a SaaS Admin Dashboard, and a Mobile-First Participant Area.",
+    "Language is Portuguese (Brazil).",
+    "Add 'Outfit' and 'Figtree' fonts to the project (e.g., via Google Fonts in index.html).",
+    "Setup Tailwind config extending colors with the custom palette provided.",
+    "Initialize React Router for navigating between / (landing), /admin (dashboard), and /app (mobile participant area).",
+    "Use dnd-kit for the Liturgy drag-and-drop editor.",
+    "For the 'Culto ao Vivo' mode, build a dedicated view without standard navigation, focusing purely on the timeline.",
+    "For the Participant Area (/app), use a mobile-first design pattern, max-width layout on desktop, and bottom tab navigation.",
+    "Do NOT use standard blue/purple SaaS colors. Stick strictly to the Organic & Earthy palette (Terracotta/Sage/Bone-white)."
+  ]
+}
