@@ -32,6 +32,11 @@ ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Admin@2026')
 ADMIN_NAME = os.environ.get('ADMIN_NAME', 'Administrador Global')
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
 SENDER_EMAIL = os.environ.get('SENDER_EMAIL', 'onboarding@resend.dev')
+GCAL_CLIENT_ID = os.environ.get('GOOGLE_CALENDAR_CLIENT_ID', '')
+GCAL_CLIENT_SECRET = os.environ.get('GOOGLE_CALENDAR_CLIENT_SECRET', '')
+APP_BASE_URL = os.environ.get('APP_BASE_URL', '').rstrip('/')
+GCAL_REDIRECT_URI = f"{APP_BASE_URL}/api/oauth/calendar/callback" if APP_BASE_URL else ''
+GCAL_SCOPES = ["https://www.googleapis.com/auth/calendar.events", "https://www.googleapis.com/auth/userinfo.email", "openid"]
 
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
@@ -157,6 +162,26 @@ class Election(BaseModel):
 class VoteReq(BaseModel):
     candidate: str
 
+class DepartmentCreate(BaseModel):
+    name: str
+    description: Optional[str] = ""
+
+class DepartmentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    member_ids: Optional[List[str]] = None
+
+class DepartmentScheduleEntry(BaseModel):
+    date: str  # ISO date string YYYY-MM-DD
+    member_id: str
+    role: Optional[str] = ""
+    notes: Optional[str] = ""
+
+class DepartmentScheduleSet(BaseModel):
+    year: int
+    month: int  # 1-12
+    entries: List[DepartmentScheduleEntry]
+
 # ================= Utils =================
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
@@ -234,6 +259,95 @@ async def send_email_bg(to: str, subject: str, html: str):
         })
     except Exception as e:
         logger.warning(f"resend fail: {e}")
+
+# ================= Google Calendar =================
+async def _gcal_token_exchange(code: str) -> dict:
+    """Trocar code por tokens diretamente (evita scope mismatch)."""
+    async with httpx.AsyncClient(timeout=15) as cli:
+        r = await cli.post("https://oauth2.googleapis.com/token", data={
+            "code": code, "client_id": GCAL_CLIENT_ID, "client_secret": GCAL_CLIENT_SECRET,
+            "redirect_uri": GCAL_REDIRECT_URI, "grant_type": "authorization_code",
+        })
+    if r.status_code != 200:
+        logger.warning(f"google token exchange failed: {r.text}")
+        raise HTTPException(400, "Falha ao trocar codigo por tokens")
+    return r.json()
+
+async def _gcal_refresh(refresh_token: str) -> dict:
+    async with httpx.AsyncClient(timeout=15) as cli:
+        r = await cli.post("https://oauth2.googleapis.com/token", data={
+            "refresh_token": refresh_token, "client_id": GCAL_CLIENT_ID,
+            "client_secret": GCAL_CLIENT_SECRET, "grant_type": "refresh_token",
+        })
+    if r.status_code != 200:
+        raise HTTPException(401, "Falha ao renovar token Google")
+    return r.json()
+
+async def _get_gcal_access_token(user_id: str) -> Optional[str]:
+    u = await db.users.find_one({"user_id": user_id}, {"_id": 0})
+    if not u or not u.get("gcal_tokens"):
+        return None
+    tokens = u["gcal_tokens"]
+    expires_at = tokens.get("expires_at")
+    if expires_at:
+        if isinstance(expires_at, str):
+            expires_at = datetime.fromisoformat(expires_at)
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if not expires_at or expires_at - timedelta(minutes=2) < now_utc():
+        rt = tokens.get("refresh_token")
+        if not rt:
+            return None
+        try:
+            new_t = await _gcal_refresh(rt)
+            tokens["access_token"] = new_t["access_token"]
+            tokens["expires_at"] = (now_utc() + timedelta(seconds=new_t.get("expires_in", 3600))).isoformat()
+            await db.users.update_one({"user_id": user_id}, {"$set": {"gcal_tokens": tokens}})
+        except Exception as e:
+            logger.warning(f"gcal refresh fail: {e}")
+            return None
+    return tokens.get("access_token")
+
+async def create_calendar_event(user_id: str, *, summary: str, description: str, start_iso: str, end_iso: str) -> Optional[str]:
+    """Cria evento no calendar do usuario com lembretes 24h e 1h. Retorna event_id ou None."""
+    access = await _get_gcal_access_token(user_id)
+    if not access:
+        return None
+    body = {
+        "summary": summary, "description": description,
+        "start": {"dateTime": start_iso}, "end": {"dateTime": end_iso},
+        "reminders": {"useDefault": False, "overrides": [
+            {"method": "popup", "minutes": 24 * 60},
+            {"method": "popup", "minutes": 60},
+            {"method": "email", "minutes": 24 * 60},
+        ]},
+    }
+    try:
+        async with httpx.AsyncClient(timeout=15) as cli:
+            r = await cli.post(
+                "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+                headers={"Authorization": f"Bearer {access}"}, json=body,
+            )
+        if r.status_code in (200, 201):
+            return r.json().get("id")
+        logger.warning(f"gcal create event fail: {r.status_code} {r.text}")
+    except Exception as e:
+        logger.warning(f"gcal create event exception: {e}")
+    return None
+
+async def delete_calendar_event(user_id: str, event_id: str) -> bool:
+    access = await _get_gcal_access_token(user_id)
+    if not access or not event_id:
+        return False
+    try:
+        async with httpx.AsyncClient(timeout=15) as cli:
+            r = await cli.delete(
+                f"https://www.googleapis.com/calendar/v3/calendars/primary/events/{event_id}",
+                headers={"Authorization": f"Bearer {access}"},
+            )
+        return r.status_code in (200, 204, 410)
+    except Exception:
+        return False
 
 # ================= Auth =================
 @api.post("/auth/register")
@@ -540,8 +654,45 @@ async def update_assignment(assignment_id: str, status: str, user: User = Depend
     a = await db.assignments.find_one({"assignment_id": assignment_id}, {"_id": 0})
     if not a:
         raise HTTPException(404, "Nao encontrado")
-    await db.assignments.update_one({"assignment_id": assignment_id}, {"$set": {"status": status}})
-    return {"ok": True, "status": status}
+    update = {"status": status}
+    # If confirming, try to create calendar event for the user (if they connected Google Calendar)
+    if status == "confirmado":
+        # Find member -> linked user (by email)
+        m = await db.members.find_one({"member_id": a["member_id"]}, {"_id": 0})
+        s = await db.services.find_one({"service_id": a["service_id"]}, {"_id": 0})
+        target_user = None
+        if m and m.get("email"):
+            target_user = await db.users.find_one({"email": m["email"]}, {"_id": 0})
+        # Or current user themself if they're confirming for themselves
+        if not target_user and user.email and m and (not m.get("email") or m["email"].lower() == user.email.lower()):
+            target_user = await db.users.find_one({"user_id": user.user_id}, {"_id": 0})
+        if target_user and s:
+            step = next((st for st in s.get("steps", []) if st["id"] == a["step_id"]), {})
+            try:
+                start = datetime.fromisoformat(s["date"]) if isinstance(s["date"], str) else s["date"]
+                if start.tzinfo is None:
+                    start = start.replace(tzinfo=timezone.utc)
+                end = start + timedelta(minutes=int(step.get("duration_min", 30)) or 30)
+                ev_id = await create_calendar_event(
+                    target_user["user_id"],
+                    summary=f"{s['name']} - {step.get('name','Etapa')}",
+                    description=f"ChurchFlow: voce esta escalado para {step.get('name','etapa')} no culto {s['name']}.",
+                    start_iso=start.isoformat(), end_iso=end.isoformat(),
+                )
+                if ev_id:
+                    update["gcal_event_id"] = ev_id
+            except Exception as e:
+                logger.warning(f"calendar event create skipped: {e}")
+    # If refusing and there was a calendar event, delete it
+    if status == "recusado" and a.get("gcal_event_id"):
+        m = await db.members.find_one({"member_id": a["member_id"]}, {"_id": 0})
+        if m and m.get("email"):
+            tu = await db.users.find_one({"email": m["email"]}, {"_id": 0})
+            if tu:
+                await delete_calendar_event(tu["user_id"], a["gcal_event_id"])
+        update["gcal_event_id"] = None
+    await db.assignments.update_one({"assignment_id": assignment_id}, {"$set": update})
+    return {"ok": True, "status": status, "gcal_event_id": update.get("gcal_event_id")}
 
 @api.delete("/assignments/{assignment_id}")
 async def delete_assignment(assignment_id: str, user: User = Depends(current_user)):
@@ -610,6 +761,133 @@ async def my_notifications(user: User = Depends(current_user)):
         {"_id": 0}
     ).sort("created_at", -1).to_list(100)
     return rows
+
+# ================= Departments =================
+@api.get("/churches/{church_id}/departments")
+async def list_departments(church_id: str, user: User = Depends(current_user)):
+    if not _church_access(user, church_id) and user.church_id != church_id:
+        raise HTTPException(403, "Permissao negada")
+    rows = await db.departments.find({"church_id": church_id}, {"_id": 0}).to_list(500)
+    return rows
+
+@api.post("/churches/{church_id}/departments")
+async def create_department(church_id: str, req: DepartmentCreate, user: User = Depends(current_user)):
+    if not _church_access(user, church_id):
+        raise HTTPException(403, "Permissao negada")
+    did = f"dep_{uuid.uuid4().hex[:12]}"
+    doc = {
+        "department_id": did, "church_id": church_id, "name": req.name,
+        "description": req.description or "", "member_ids": [],
+        "created_at": now_utc().isoformat(),
+    }
+    await db.departments.insert_one(doc)
+    return {k: v for k, v in doc.items() if k != "_id"}
+
+@api.patch("/departments/{department_id}")
+async def update_department(department_id: str, req: DepartmentUpdate, user: User = Depends(current_user)):
+    d = await db.departments.find_one({"department_id": department_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Nao encontrado")
+    if not _church_access(user, d["church_id"]):
+        raise HTTPException(403, "Permissao negada")
+    upd = {k: v for k, v in req.model_dump(exclude_unset=True).items() if v is not None}
+    if upd:
+        await db.departments.update_one({"department_id": department_id}, {"$set": upd})
+    return {"ok": True}
+
+@api.delete("/departments/{department_id}")
+async def delete_department(department_id: str, user: User = Depends(current_user)):
+    d = await db.departments.find_one({"department_id": department_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Nao encontrado")
+    if not _church_access(user, d["church_id"]):
+        raise HTTPException(403, "Permissao negada")
+    await db.departments.delete_one({"department_id": department_id})
+    await db.department_schedules.delete_many({"department_id": department_id})
+    return {"ok": True}
+
+@api.get("/departments/{department_id}/schedule")
+async def get_dep_schedule(department_id: str, year: int, month: int, user: User = Depends(current_user)):
+    d = await db.departments.find_one({"department_id": department_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Nao encontrado")
+    if not _church_access(user, d["church_id"]) and user.church_id != d["church_id"]:
+        raise HTTPException(403, "Permissao negada")
+    s = await db.department_schedules.find_one(
+        {"department_id": department_id, "year": year, "month": month}, {"_id": 0}
+    )
+    return s or {"department_id": department_id, "year": year, "month": month, "entries": []}
+
+@api.put("/departments/{department_id}/schedule")
+async def set_dep_schedule(department_id: str, req: DepartmentScheduleSet, user: User = Depends(current_user)):
+    d = await db.departments.find_one({"department_id": department_id}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Nao encontrado")
+    if not _church_access(user, d["church_id"]):
+        raise HTTPException(403, "Permissao negada")
+    entries = [e.model_dump() for e in req.entries]
+    await db.department_schedules.update_one(
+        {"department_id": department_id, "year": req.year, "month": req.month},
+        {"$set": {
+            "department_id": department_id, "church_id": d["church_id"],
+            "year": req.year, "month": req.month, "entries": entries,
+            "updated_at": now_utc().isoformat(),
+        }},
+        upsert=True,
+    )
+    return {"ok": True, "count": len(entries)}
+
+# ================= Google Calendar OAuth =================
+@api.get("/oauth/calendar/login")
+async def gcal_login(user: User = Depends(current_user)):
+    if not GCAL_CLIENT_ID:
+        raise HTTPException(503, "Google Calendar nao configurado")
+    state = create_jwt(user.user_id, days=1)
+    from urllib.parse import urlencode
+    params = {
+        "client_id": GCAL_CLIENT_ID, "redirect_uri": GCAL_REDIRECT_URI,
+        "response_type": "code", "scope": " ".join(GCAL_SCOPES),
+        "access_type": "offline", "prompt": "consent", "state": state,
+        "include_granted_scopes": "true",
+    }
+    return {"authorization_url": f"https://accounts.google.com/o/oauth2/v2/auth?{urlencode(params)}"}
+
+@api.get("/oauth/calendar/callback")
+async def gcal_callback(code: str, state: str):
+    from fastapi.responses import RedirectResponse
+    uid = decode_jwt(state)
+    if not uid:
+        return RedirectResponse(f"{APP_BASE_URL}/dashboard?gcal=erro_state")
+    try:
+        tokens = await _gcal_token_exchange(code)
+    except Exception:
+        return RedirectResponse(f"{APP_BASE_URL}/dashboard?gcal=erro_token")
+    expires_in = tokens.get("expires_in", 3600)
+    saved = {
+        "access_token": tokens["access_token"],
+        "refresh_token": tokens.get("refresh_token"),
+        "expires_at": (now_utc() + timedelta(seconds=expires_in)).isoformat(),
+        "scope": tokens.get("scope", ""),
+        "connected_at": now_utc().isoformat(),
+    }
+    # Preserve existing refresh_token if Google didn't return a new one
+    cur = await db.users.find_one({"user_id": uid}, {"_id": 0})
+    if cur and cur.get("gcal_tokens", {}).get("refresh_token") and not saved["refresh_token"]:
+        saved["refresh_token"] = cur["gcal_tokens"]["refresh_token"]
+    await db.users.update_one({"user_id": uid}, {"$set": {"gcal_tokens": saved}})
+    return RedirectResponse(f"{APP_BASE_URL}/dashboard?gcal=ok")
+
+@api.get("/oauth/calendar/status")
+async def gcal_status(user: User = Depends(current_user)):
+    u = await db.users.find_one({"user_id": user.user_id}, {"_id": 0})
+    tokens = (u or {}).get("gcal_tokens") or {}
+    connected = bool(tokens.get("access_token") or tokens.get("refresh_token"))
+    return {"connected": connected, "connected_at": tokens.get("connected_at")}
+
+@api.post("/oauth/calendar/disconnect")
+async def gcal_disconnect(user: User = Depends(current_user)):
+    await db.users.update_one({"user_id": user.user_id}, {"$unset": {"gcal_tokens": ""}})
+    return {"ok": True}
 
 # ================= Reports =================
 @api.get("/churches/{church_id}/reports")

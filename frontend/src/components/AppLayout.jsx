@@ -4,13 +4,14 @@ import { useAuth } from "@/context/AuthContext";
 import api from "@/lib/api";
 import {
   LayoutDashboard, Building2, Users, CalendarDays, ClipboardList,
-  Vote, FileBarChart, Bell, LogOut, Menu, X, Church as ChurchIcon,
+  Vote, FileBarChart, Bell, LogOut, Menu, X, Church as ChurchIcon, Briefcase,
 } from "lucide-react";
 
 const NAV = [
   { to: "/dashboard", label: "Visao Geral", icon: LayoutDashboard, testid: "nav-dashboard" },
   { to: "/igrejas", label: "Igrejas", icon: Building2, testid: "nav-igrejas", roles: ["ADMIN_GLOBAL"] },
   { to: "/membros", label: "Membros", icon: Users, testid: "nav-membros" },
+  { to: "/departamentos", label: "Departamentos", icon: Briefcase, testid: "nav-departamentos" },
   { to: "/cultos", label: "Cultos", icon: CalendarDays, testid: "nav-cultos" },
   { to: "/escalas", label: "Escalas", icon: ClipboardList, testid: "nav-escalas" },
   { to: "/eleicoes", label: "Eleicoes", icon: Vote, testid: "nav-eleicoes" },

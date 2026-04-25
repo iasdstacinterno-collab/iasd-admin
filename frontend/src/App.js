@@ -18,6 +18,7 @@ import Escalas from "@/pages/Escalas";
 import Eleicoes from "@/pages/Eleicoes";
 import Relatorios from "@/pages/Relatorios";
 import Notificacoes from "@/pages/Notificacoes";
+import Departamentos from "@/pages/Departamentos";
 import ParticipantApp from "@/pages/ParticipantApp";
 
 function AppRouter() {
@@ -37,6 +38,7 @@ function AppRouter() {
         <Route path="/cultos" element={<Cultos />} />
         <Route path="/cultos/:id/editor" element={<ServiceEditor />} />
         <Route path="/escalas" element={<Escalas />} />
+        <Route path="/departamentos" element={<Departamentos />} />
         <Route path="/eleicoes" element={<Eleicoes />} />
         <Route path="/relatorios" element={<Relatorios />} />
         <Route path="/notificacoes" element={<Notificacoes />} />

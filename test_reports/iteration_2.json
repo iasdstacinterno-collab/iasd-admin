@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 2 testing for ChurchFlow new features: Departments CRUD + monthly schedule, and Google Calendar OAuth (own credentials). Backend: 10/10 pytest tests pass on /api/churches/{id}/departments (CRUD), /api/departments/{id}/schedule (PUT/GET), and /api/oauth/calendar/{login,status,disconnect,callback}. Frontend: dashboard banner, sidebar nav, /departamentos page and existing department card all verified visually and via API; create-department form had a timing issue in the playwright run but backend POST is verified.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/oauth/calendar/callback", "issue": "When called without `code`/`state` query params, FastAPI returns 422 (validation error) instead of redirecting to /dashboard?gcal=erro_state. Endpoint is reachable (not 404) so requirement is met; consider making params optional and redirecting to error so accidental hits don't expose 422 stack."},
+      {"endpoint": "POST /api/churches/{id}/templates", "issue": "Pydantic step model requires both `name` and `title`. The seed only sets one path; mismatched schemas across template creation flows could be unified."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "/departamentos -> new-department-btn -> department-form", "issue": "After clicking 'Novo departamento' in playwright run, the form occasionally did not become visible within 30s. Manual screenshot shows the page itself works (existing 'Musica' department with members visible). Likely a race when clicking immediately after navigation; backend POST /departments returns 200 in unit tests. Consider opening the form in a stable state (e.g., default open if list is empty, or always-mounted with conditional content) to make tests deterministic.", "affected_selectors": ["[data-testid='department-form']", "[data-testid='new-department-btn']"]}
+    ],
+    "design_issues": [
+      {"screen": "/dashboard", "issues": ["Two 401 console errors fire on initial dashboard mount (GET /api/oauth/calendar/status before token is attached, plus an /api/auth/me retry). Consider deferring gcal status fetch until after auth context is ready."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_departments_gcal.py",
+    "/app/backend/tests/test_churchflow.py",
+    "/app/test_reports/pytest/iteration_2_results.xml"
+  ],
+  "action_items": [
+    "Make the 'Novo departamento' form mount/visibility deterministic so e2e tests don't depend on a transient state toggle (e.g., always render the <form> and toggle via CSS, or focus the first input on open).",
+    "Make /api/oauth/calendar/callback's `code`/`state` optional and redirect to /dashboard?gcal=erro_state on missing/invalid params instead of 422.",
+    "Defer the initial GET /api/oauth/calendar/status call on Dashboard until the auth token is attached to the api client to suppress two 401 console errors on first paint.",
+    "Add a server-side seed for at least one Department + monthly schedule to make UI demo-able without manual setup."
+  ],
+  "critical_code_review_comments": [
+    "server.py is now 1035 lines (was 757). Strongly recommend splitting into routers/ (auth, churches, members, services, departments, oauth_calendar, reports) to keep <700 lines per file as per guideline.",
+    "_gcal_token_exchange / _gcal_create_event errors are silently swallowed (best-effort). That's correct per spec, but log the underlying exception with stack so failures are diagnosable in prod.",
+    "PATCH /api/departments/{id} accepts member_ids: List[str] without validating each id exists in /members for that church. Could allow stale references. Consider validating against db.members or filtering on read.",
+    "PUT /api/departments/{id}/schedule overwrites entries entirely (correct per requirement). Entries do not validate `member_id` exists in dep.member_ids; UI restricts the dropdown but API does not.",
+    "GCAL_REDIRECT_URI is derived from APP_BASE_URL; ensure that exact URI is registered in Google Cloud Console for both preview and prod, otherwise OAuth will fail with redirect_uri_mismatch.",
+    "Frontend Departamentos.jsx: API errors on save/toggle/saveSchedule are swallowed with toast.error('Falha') or no toast at all (saveSchedule, toggleMember). Surface response detail to the user.",
+    "Sensitive: backend/.env still contains the plaintext GOOGLE_CALENDAR_CLIENT_SECRET; ensure it is never bundled into the frontend or logged."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_departments_gcal.py (new pytest suite: 10 tests covering departments CRUD, schedule, gcal OAuth endpoints, assignment-confirm without gcal)"
+  ],
+  "success_rate": {"backend": "100% (10/10 new + 16/16 existing)", "frontend": "~85% (dashboard banner, sidebar nav, /departamentos render, existing department card with members + Escala button verified; create-form click had transient timeout in automation)"},
+  "test_credentials": "Admin: iasdstacinterno@gmail.com / Admin@2026 (verified)",
+  "seed_data_creation": "Tests auto-create a TEST_ church/template/members on the fly when seed is missing (the seed has drifted from iteration 1 — IASD Central was deleted; only 'IASD Santa Catarina' exists with 2 members and 0 templates and a 'Musica' department). Created TEST_ departments are cleaned up by tests; cleanup of TEST_ church/template is not done (idempotent fixtures).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "New backend suite is at /app/backend/tests/test_departments_gcal.py (10 tests). All 26 backend tests (16 from iteration 1 + 10 new) pass. The existing seed church 'IASD Central' from iteration 1 has been deleted; the live DB now contains only 'IASD Santa Catarina' with 2 members, 0 templates, and 1 department 'Musica'. Tests are written to be resilient to this. Frontend uses data-testid: gcal-banner, gcal-connect, gcal-disconnect, nav-departamentos, dep-church-select, new-department-btn, department-form, department-name-input, department-desc-input, department-save, department-{id}, dep-mem-{depId}-{memId}, sched-{depId}, schedule-modal, sched-month, sched-year, add-sched-entry, save-schedule, sched-entry-{i}, close-schedule. The 'gcal-connect' button truly redirects to accounts.google.com (verified visually). To re-test the create form deterministically, wait for the page load + add explicit wait_for_load_state('networkidle') before clicking new-department-btn.",
+  "rca of the issue": "OAuth callback 422 RCA: code: str, state: str declared as required path query params. FastAPI returns 422 when missing. Mitigation: declare as Optional[str]=None and handle missing case with redirect to /dashboard?gcal=erro_state. Departamentos form transient timeout RCA: element 'department-form' is conditionally rendered via {showForm && ...}; clicking the toggle button immediately after navigation is sometimes preempted by a re-render. Mitigation: always render the form node and toggle visibility via class, or assert the page has fully loaded (e.g., wait for [data-testid=\"new-department-btn\"]:not(:disabled)) before clicking."
+}
